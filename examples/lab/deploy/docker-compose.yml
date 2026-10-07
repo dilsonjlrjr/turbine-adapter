@@ -1,0 +1,48 @@
+# Run from this directory:  cp .env.example .env && docker compose up -d --build
+# From another layout (e.g. repo copied to ./src), set in .env:
+#   BUILD_CONTEXT=./src
+#   DOCKERFILE=examples/lab/deploy/Dockerfile
+name: turbine-test
+
+services:
+  postgres:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: turbine
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: turbine
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U turbine -d turbine"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    # Not published to the host: only reachable by the app on the compose network.
+
+  app:
+    build:
+      context: ${BUILD_CONTEXT:-../../..}
+      dockerfile: ${DOCKERFILE:-examples/lab/deploy/Dockerfile}
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      TURBINE_SYSDB_DSN: postgres://turbine:${POSTGRES_PASSWORD}@postgres:5432/turbine?sslmode=disable
+    ports:
+      - "${APP_PORT:-28090}:8090"
+    volumes:
+      - pb_data:/pb_data
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8090/api/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
+
+volumes:
+  pgdata:
+  pb_data:

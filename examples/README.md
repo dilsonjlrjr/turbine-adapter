@@ -7,6 +7,7 @@ Módulo separado com binários executáveis.
 | [standalone](standalone/main.go) | `sqlite` com pragma extra | standalone | `go run ./standalone` |
 | [fromenv](fromenv/main.go) | escolhido por `TURBINE_DB_PROVIDER` | standalone | `go run ./fromenv` |
 | [httpapp](httpapp/main.go) | `libsql` | HTTP (PocketBase + dashboard) | `LIBSQL_URL=... go run ./httpapp serve` |
+| [lab](lab/README.md) | PocketBase local + execução em `postgres` | HTTP completo (pedidos, aprovação, filas, cron) | veja o README |
 
 `fromenv` com libSQL local:
 
