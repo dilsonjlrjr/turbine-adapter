@@ -1,5 +1,24 @@
 # Arquitetura
 
+## Dois eixos de armazenamento
+
+```
+                         ┌─ eixo 1: Provider (PocketBase, dialeto SQLite) ─────────────┐
+                         │  coleções de config, schedules, webhooks, produtos, arquivos │
+seu código ─► turbinedb ─┤  DBConnect ► provider.Provider ► *dbx.DB (sqlite|mattn|libsql)
+   (Config)              └──────────────────────────────────────────────────────────────┘
+                         ┌─ eixo 2: SystemDatabase (estado de execução) ───────────────┐
+                         │  status, steps, filas, mensagens, eventos, KV                │
+                         │  Config.Turbine.SystemDatabase ► turbine.SystemDatabase      │
+                         │  nil = SQLite do PocketBase │ providers/postgres = PostgreSQL │
+                         └──────────────────────────────────────────────────────────────┘
+```
+
+- O eixo 1 funciona com o Turbine original. O eixo 2 exige o fork `feature/pluggable-sysdb` (interface `SystemDatabase` exportada e injetável).
+- Com `SystemDatabase` definido, as coleções `pt_*` de execução continuam criadas no PocketBase (migrações, dashboard), mas ficam **vazias**: o estado vive no banco injetado. O dashboard lê pela mesma interface.
+- Registro por nome nos dois eixos: `provider.Register` (eixo 1) e `turbinedb.RegisterSystemDatabase` (eixo 2), ambos no `init` do pacote de implementação. `ConfigFromEnv` resolve `TURBINE_DB_PROVIDER` e `TURBINE_SYSDB`.
+- O runtime do Turbine chama `Launch`/`Shutdown` do `SystemDatabase`; o adaptador não os chama.
+
 ## Camadas
 
 ```
@@ -15,7 +34,8 @@ seu código ──► turbinedb (Config, NewApp, NewStandalone, ConfigFromEnv)
 - **`provider/`** — contrato (`Provider`, `Target`, `Role`) e registro por nome. Depende só de `pocketbase/dbx`, para que provedores em módulos separados não puxem o resto.
 - **raiz (`turbinedb`)** — monta o app PocketBase com o hook e entrega ao Turbine. Não conhece nenhum driver além do SQLite padrão.
 - **`sqlite/`** — provedor padrão (modernc, puro Go). Mesmo módulo da raiz porque o PocketBase já depende desse driver.
-- **`providers/*`** — um módulo Go por provedor com driver próprio.
+- **`providers/*`** — um módulo Go por provedor com driver próprio. `providers/postgres` é o único que implementa o eixo 2 (`turbine.SystemDatabase`) em vez de `provider.Provider`.
+- **`sysdb.go` (raiz)** — registro de `SystemDatabaseFactory` (`RegisterSystemDatabase`, `OpenSystemDatabase`), espelho do registro de provedores.
 
 ## Dois bancos, dois papéis
 
@@ -52,3 +72,5 @@ O PocketBase escolhe o *query builder* do `dbx` pelo nome do driver. Para driver
 ## Registro de provedores
 
 Mesmo padrão de `database/sql`: cada pacote de provedor chama `provider.Register(nome, factory)` no `init`. `ConfigFromEnv` resolve `TURBINE_DB_PROVIDER` via `provider.Open`. Provedor não importado = `ErrUnknownProvider` com a lista dos registrados.
+
+O eixo 2 segue o mesmo padrão: `postgres` chama `turbinedb.RegisterSystemDatabase("postgres", FromSettings)` no `init`; `ConfigFromEnv` lê `TURBINE_SYSDB`, `TURBINE_SYSDB_DSN` e `TURBINE_SYSDB_OPTIONS`, chama `OpenSystemDatabase` (que conecta e migra) e grava o resultado em `cfg.Turbine.SystemDatabase`. Nome desconhecido = `ErrUnknownSystemDatabase` (embrulhado em `ErrInvalidConfig`).

@@ -17,6 +17,7 @@ Baseada no Turbine `v0.3.0` (commit `ba535c5`) e PocketBase `v0.36.8`.
 | Implementar `systemDatabase` para outro banco | **Não** | Interface privada, construção fixa em `NewRuntime` |
 | Trocar o banco do PocketBase por Postgres/MySQL | **Não** | PocketBase só suporta dialeto SQLite (migrações, filtros, schema) |
 | Hook `DBConnect` do PocketBase com driver compatível com SQLite | **Sim** | API pública, e `turbine.Setup`/`SetupStandalone` aceitam app externo |
+| Injetar `SystemDatabase` (Postgres) para o estado de execução | **Só com o fork** | `feature/pluggable-sysdb`; ver seção abaixo |
 
 ## Decisão
 
@@ -33,6 +34,18 @@ O adaptador usa o hook `DBConnect`. Isso cobre qualquer backend que fale dialeto
 - **Transações**: o PocketBase usa um pool de escrita de conexão única; o provedor remoto precisa suportar transações interativas (libSQL via Hrana suporta).
 - **Upgrade do Turbine**: o adaptador depende só de `Setup`, `SetupStandalone` e `Config` públicos. Mudança nessas assinaturas quebra o adaptador; o resto do Turbine pode evoluir livremente.
 
-## Caminho para Postgres (fora de escopo)
+## Postgres para o estado de execução (viável com o fork)
 
-Exigiria, no upstream: exportar `systemDatabase` + opção de injeção em `Config`, e uma implementação Postgres. Mesmo assim o restante (coleções, dashboard, hooks) continuaria preso ao PocketBase/SQLite. Não recomendado como extensão desacoplada.
+O que antes era "fora de escopo" passou a ser viável com o fork `feature/pluggable-sysdb` de `github.com/dilsonjlrjr/turbine` (a partir do upstream `github.com/YakirOren/turbine`). Mudanças do fork:
+
+- **`SystemDatabase` exportada** (`sysdb.go`), com o contrato documentado no godoc, e injeção por `Config.SystemDatabase`; a implementação SQLite embutida continua o padrão (`NewSQLiteSystemDatabase`).
+- **Suíte de conformidade exportada** (`sysdbtest.RunSuite`) e construtores de erro exportados (`NewErrWorkflowNotFound`, `NewErrDeduplicated`, ...).
+- **Novos métodos na interface**: `QueryWorkflows` (paginado/ordenável), `CountWorkflows` (agrupado por status e bucket), `ListKV` e `DeleteWorkflow`.
+- **Dashboard**: endpoints REST e *data provider* da UI passaram a usar a interface (consultas, contagens, KV, exclusão), em vez de ler as coleções `pt_*` direto.
+- **Produtos desacoplados**: `pt_products` fica no PocketBase; a limpeza em `GarbageCollect`/`DeleteWorkflow` é feita pelo runtime quando há `SystemDatabase` externo.
+
+Com isso, o módulo `providers/postgres` implementa a interface (ver [providers/postgres/README.md](../providers/postgres/README.md)): estado de execução em Postgres, multi-instância via `LISTEN/NOTIFY`, limites de fila exatos entre processos.
+
+**Continua valendo:** o PocketBase em si segue em dialeto SQLite. Coleções de configuração (schedules, webhooks, alertas), produtos, arquivos e contas ficam num provedor SQLite (`sqlite`, `mattn`, `libsql`). Em multi-instância, esse banco precisa ser compartilhável (por exemplo libSQL/sqld) ou cada instância mantém o seu — a execução, em Postgres, é compartilhada de qualquer forma.
+
+**Risco novo:** o fork precisa ser acompanhado contra o upstream; o `go.mod` usa `replace github.com/YakirOren/turbine => github.com/dilsonjlrjr/turbine <pseudo-versão>`.
