@@ -1,6 +1,6 @@
-MODULES := . providers/mattn providers/libsql examples
+MODULES := . providers/mattn providers/libsql providers/postgres examples
 
-.PHONY: all test test-short test-libsql lint fmt tidy build vet check
+.PHONY: all test test-short test-libsql test-postgres lint fmt tidy build vet check
 
 all: check
 
@@ -24,6 +24,10 @@ test-short:
 test-libsql:
 	@test -n "$(TURBINEDB_LIBSQL_URL)" || (echo "set TURBINEDB_LIBSQL_URL" && exit 1)
 	cd providers/libsql && go test -count=1 -run Integration -v ./...
+
+## test-postgres: postgres system database against TURBINEDB_POSTGRES_DSN (embedded PostgreSQL when unset)
+test-postgres:
+	cd providers/postgres && go test -race -count=1 ./...
 
 ## lint: golangci-lint on every module
 lint:
