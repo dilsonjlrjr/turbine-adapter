@@ -1,0 +1,60 @@
+version: "2"
+
+run:
+  timeout: 5m
+
+formatters:
+  enable:
+    - gofumpt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/turbine-adapter/turbinedb
+
+linters:
+  enable:
+    - bodyclose
+    - copyloopvar
+    - errcheck
+    - errorlint
+    - errname
+    - gochecknoinits
+    - gocritic
+    - godot
+    - gosec
+    - govet
+    - ineffassign
+    - intrange
+    - misspell
+    - modernize
+    - nilerr
+    - nolintlint
+    - perfsprint
+    - revive
+    - sqlclosecheck
+    - staticcheck
+    - testpackage
+    - unconvert
+    - unparam
+    - unused
+    - usestdlibvars
+    - usetesting
+    - whitespace
+  settings:
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+    revive:
+      rules:
+        - name: exported
+          disabled: true
+  exclusions:
+    presets:
+      - std-error-handling
+      - common-false-positives
+    rules:
+      - path: _test\.go
+        linters: [gosec, errcheck]
+      - path: examples/
+        linters: [revive]
