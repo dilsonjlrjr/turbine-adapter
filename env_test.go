@@ -1,9 +1,13 @@
 package turbinedb_test
 
 import (
+	"context"
 	"errors"
+	"slices"
 	"testing"
 	"time"
+
+	"github.com/YakirOren/turbine"
 
 	"github.com/turbine-adapter/turbinedb"
 	"github.com/turbine-adapter/turbinedb/provider"
@@ -71,5 +75,93 @@ func TestConfigFromLookupErrors(t *testing.T) {
 				t.Fatalf("expected config error, got %v", err)
 			}
 		})
+	}
+}
+
+// fakeSysDB is a placeholder SystemDatabase; the embedded nil interface is never called.
+type fakeSysDB struct {
+	turbine.SystemDatabase
+	settings provider.Settings
+}
+
+func registerFakeSysDB(t *testing.T, name string) *fakeSysDB {
+	t.Helper()
+	fake := &fakeSysDB{}
+	turbinedb.RegisterSystemDatabase(name, func(_ context.Context, s turbinedb.Settings) (turbine.SystemDatabase, error) {
+		if s.DSN == "boom" {
+			return nil, errors.New("connection refused")
+		}
+		fake.settings = s
+		return fake, nil
+	})
+	return fake
+}
+
+func TestConfigFromLookupSystemDatabase(t *testing.T) {
+	fake := registerFakeSysDB(t, "fake-env-ok")
+
+	cfg, err := turbinedb.ConfigFromLookup(lookupFrom(map[string]string{
+		turbinedb.EnvSysDB:        "fake-env-ok",
+		turbinedb.EnvSysDBDSN:     "postgres://u:p@h/db",
+		turbinedb.EnvSysDBOptions: "schema=x, max_conns=4",
+	}))
+	if err != nil {
+		t.Fatalf("ConfigFromLookup: %v", err)
+	}
+	if cfg.Turbine.SystemDatabase != turbine.SystemDatabase(fake) {
+		t.Fatalf("SystemDatabase = %v, want the fake", cfg.Turbine.SystemDatabase)
+	}
+	if fake.settings.DSN != "postgres://u:p@h/db" ||
+		fake.settings.Options["schema"] != "x" || fake.settings.Options["max_conns"] != "4" {
+		t.Fatalf("settings = %+v", fake.settings)
+	}
+
+	cfg, err = turbinedb.ConfigFromLookup(lookupFrom(nil))
+	if err != nil || cfg.Turbine.SystemDatabase != nil {
+		t.Fatalf("empty TURBINE_SYSDB must keep the built-in: %v / %v", cfg.Turbine.SystemDatabase, err)
+	}
+}
+
+func TestConfigFromLookupSystemDatabaseErrors(t *testing.T) {
+	registerFakeSysDB(t, "fake-env-err")
+	cases := map[string]map[string]string{
+		"unknown":       {turbinedb.EnvSysDB: "does-not-exist"},
+		"factory error": {turbinedb.EnvSysDB: "fake-env-err", turbinedb.EnvSysDBDSN: "boom"},
+		"bad options":   {turbinedb.EnvSysDB: "fake-env-err", turbinedb.EnvSysDBOptions: "novalue"},
+	}
+	for name, env := range cases {
+		t.Run(name, func(t *testing.T) {
+			_, err := turbinedb.ConfigFromLookup(lookupFrom(env))
+			if !errors.Is(err, turbinedb.ErrInvalidConfig) {
+				t.Fatalf("expected ErrInvalidConfig, got %v", err)
+			}
+		})
+	}
+	_, err := turbinedb.OpenSystemDatabase(context.Background(), "does-not-exist", turbinedb.Settings{})
+	if !errors.Is(err, turbinedb.ErrUnknownSystemDatabase) {
+		t.Fatalf("expected ErrUnknownSystemDatabase, got %v", err)
+	}
+}
+
+func TestRegisterSystemDatabasePanics(t *testing.T) {
+	registerFakeSysDB(t, "fake-dup")
+	for name, fn := range map[string]func(){
+		"empty name": func() {
+			turbinedb.RegisterSystemDatabase("", func(context.Context, turbinedb.Settings) (turbine.SystemDatabase, error) { return nil, nil })
+		},
+		"nil":       func() { turbinedb.RegisterSystemDatabase("fake-nil", nil) },
+		"duplicate": func() { registerFakeSysDB(t, "fake-dup") },
+	} {
+		t.Run(name, func(t *testing.T) {
+			defer func() {
+				if recover() == nil {
+					t.Fatal("expected panic")
+				}
+			}()
+			fn()
+		})
+	}
+	if !slices.Contains(turbinedb.RegisteredSystemDatabases(), "fake-dup") {
+		t.Fatal("fake-dup missing from RegisteredSystemDatabases")
 	}
 }

@@ -1,6 +1,7 @@
 package turbinedb
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -29,6 +30,9 @@ const (
 	EnvAppVersion      = "TURBINE_APP_VERSION"       // turbine.Config.ApplicationVersion
 	EnvGCRetention     = "TURBINE_GC_RETENTION"      // Go duration; negative disables GC
 	EnvShutdownTimeout = "TURBINE_SHUTDOWN_TIMEOUT"  // Go duration
+	EnvSysDB           = "TURBINE_SYSDB"             // system database registry name; empty = built-in (PocketBase SQLite)
+	EnvSysDBDSN        = "TURBINE_SYSDB_DSN"         // system database DSN / URL
+	EnvSysDBOptions    = "TURBINE_SYSDB_OPTIONS"     // "key=value,key=value"
 )
 
 // LookupFunc matches os.LookupEnv; injectable for tests and custom sources.
@@ -38,6 +42,12 @@ type LookupFunc func(key string) (string, bool)
 // Providers other than "sqlite" must be linked in with a blank import, e.g.
 //
 //	import _ "github.com/turbine-adapter/turbinedb/providers/libsql"
+//
+// When TURBINE_SYSDB is set, the named system database is opened (it may
+// connect and migrate immediately) and stored in Config.Turbine.SystemDatabase;
+// it must be linked in with a blank import too, e.g.
+//
+//	import _ "github.com/turbine-adapter/turbinedb/providers/postgres"
 func ConfigFromEnv() (Config, error) {
 	return ConfigFromLookup(os.LookupEnv)
 }
@@ -76,6 +86,17 @@ func ConfigFromLookup(lookup LookupFunc) (Config, error) {
 	errs = append(errs, err)
 	cfg.Turbine.ShutdownTimeout, err = parseDuration(EnvShutdownTimeout, get(EnvShutdownTimeout))
 	errs = append(errs, err)
+
+	if name := get(EnvSysDB); name != "" {
+		sysOpts, optErr := parseOptions(get(EnvSysDBOptions))
+		errs = append(errs, optErr)
+		if optErr == nil {
+			sysDB, sysErr := OpenSystemDatabase(context.Background(), name,
+				Settings{DSN: get(EnvSysDBDSN), Options: sysOpts})
+			errs = append(errs, sysErr)
+			cfg.Turbine.SystemDatabase = sysDB
+		}
+	}
 
 	if err := errors.Join(errs...); err != nil {
 		return Config{}, fmt.Errorf("%w: %w", ErrInvalidConfig, err)
